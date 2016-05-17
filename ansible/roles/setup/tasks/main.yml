@@ -1,0 +1,33 @@
+---
+# file: roles/setup/tasks/main.yml
+# ###########################
+# Role Variables:
+###########################
+# PROJECT_HOME
+###########################
+# Examples:
+###########################
+# PROJECT_HOME: /opt/tomcat/tmp/
+- name: Set to system python
+  set_fact: ansible_python_interpreter="/usr/bin/python2.7"
+
+- name: "Create virtualenv"
+  shell: virtualenv-2.7 {{ PROJECT_HOME }}/venv --python=python2.7
+    creates="{{ PROJECT_HOME }}/venv/bin/activate"
+
+- name: "Copy virtualenv wrapper file"
+  copy: src=pyvenv
+    dest="{{ PROJECT_HOME }}/venv/bin/pyvenv"
+    mode=0755
+
+- name: Set to venv python
+  set_fact: ansible_python_interpreter="{{ PROJECT_HOME }}/venv/bin/pyvenv"
+
+- name: "Guard code, so we are more certain we are in a virtualenv"
+  shell: echo $VIRTUAL_ENV
+  register: command_result
+  failed_when: command_result.stdout == ""  
+  changed_when: command_result.stdout != "{{ PROJECT_HOME }}/venv"
+
+- name: make sure httplib2 is available.
+  pip: name=httplib2

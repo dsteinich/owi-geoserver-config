@@ -1,0 +1,4 @@
+---
+# file: roles/config/meta/main.yml
+dependencies:
+  - setup
