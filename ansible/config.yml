@@ -1,6 +1,0 @@
----
-# file: config.yml
-- name: Setup playbook
-  hosts: "{{target_host}}"
-  roles:
-    - config
