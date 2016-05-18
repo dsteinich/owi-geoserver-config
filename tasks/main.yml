@@ -1,0 +1,6 @@
+---
+# file: tasks/main.yml
+- name: Go geoserver
+  hosts: "{{target_host}}"
+  roles:
+    - config
