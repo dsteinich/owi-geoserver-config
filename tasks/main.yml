@@ -1,6 +1,121 @@
----
-# file: tasks/main.yml
-- name: Go geoserver
-  hosts: "{{target_host}}"
-  roles:
-    - config
+# file: roles/config/tasks/main.yml
+# ###########################
+# Role Variables:
+###########################
+#artifactory_server
+#catalina_home
+#geoserver_ajp_port
+#geoserver_data_dir
+#geoserver_data_dir_path
+#geoserver_data_directory
+#geoserver_endpoint
+#geoserver_http_port
+#geoserver_https_port
+#geoserver_instance
+#geoserver_password
+#geoserver_version
+#geoserver_workspace_names
+#geoserver_Xmx
+#java_home
+#server_shortname
+#tomcat_instance_location
+
+- name: Make sure geoserver instance exists
+  stat: path={{ tomcat_instance_location }}{{ geoserver_instance }}
+  register: geoserver_instance_state
+
+- name: Create geoserver instance
+  shell: "cp -rf {{ catalina_home }}/template/ {{ tomcat_instance_location }}{{ geoserver_instance }}"
+  when: geoserver_instance_state.stat.exists == false
+
+- name: Set javahome
+  lineinfile: dest={{ tomcat_instance_location }}{{ geoserver_instance }}/bin/setenv.sh regexp="JAVA_HOME=.*" line="JAVA_HOME=\"{{ java_home }}\""
+
+- name: Set -Xmx on services
+  lineinfile: dest={{ tomcat_instance_location }}{{ geoserver_instance }}/bin/catalinaopts.sh regexp=".*_OPTS -Xmx.*" line="CATALINA_OPTS=\"$CATALINA_OPTS -Xmx{{ geoserver_Xmx }}\""
+
+- name: Set HeapDumpsPath on default
+  lineinfile: dest={{ tomcat_instance_location }}{{ geoserver_instance }}/bin/catalinaopts.sh regexp=".*HeapDumpPath=.*" line="CATALINA_OPTS=\"$CATALINA_OPTS -XX:HeapDumpPath=$CATALINA_HOME/heapdumps/{{ server_shortname }}/{{ geoserver_instance }}\""
+
+- name: Add geoserver data directory
+  lineinfile: dest={{ tomcat_instance_location }}{{ geoserver_instance }}/bin/catalinaopts.sh regexp=".*DGEOSERVER_DATA_DIR=.*" line="CATALINA_OPTS=\"$CATALINA_OPTS -DGEOSERVER_DATA_DIR={{ geoserver_data_directory }}Geoserver\""
+
+- name: Set http port
+  replace: dest={{ tomcat_instance_location }}{{ geoserver_instance }}/conf/server.xml regexp="port=\"8080\"" replace="port=\"{{ geoserver_http_port }}\""
+
+- name: Set http redirectport
+  replace: dest={{ tomcat_instance_location }}{{ geoserver_instance }}/conf/server.xml regexp="redirectPort=\"8443\"" replace="redirectPort=\"{{ geoserver_https_port }}\""
+
+- name: Set https port
+  replace: dest={{ tomcat_instance_location }}{{ geoserver_instance }}/conf/server.xml regexp="port=\"8443\"" replace="port=\"8445\""
+
+- name: Set ajp port
+  replace: dest={{ tomcat_instance_location }}{{ geoserver_instance }}/conf/server.xml regexp="port=\"8009\"" replace="port=\"{{ geoserver_ajp_port }}\""
+
+- name: Check if geoserver war exists.
+  stat: path={{ tomcat_instance_location }}{{ geoserver_instance }}/webapps/geoserver.war
+  register: geoserver_war_exists
+
+- name: Get geoserver war if needed.
+  shell: "cd /tmp/geoserver; wget --no-check-certificate https://repo.boundlessgeo.com/main/org/geoserver/web/gs-web-app/{{ geoserver_version }}/gs-web-app-{{ geoserver_version }}.war; cp gs-web-app-{{ geoserver_version }}.war {{ tomcat_instance_location }}{{ geoserver_instance }}/webapps/geoserver.war"
+  when: geoserver_war_exists.stat.exists == false
+
+- name: check if geoserver data directory exists.
+  stat: path={{ geoserver_data_directory }}Geoserver
+  register: geoserver_data_dir_exists
+
+- name: Make sure base geoserver data space exists
+  file: path={{ geoserver_data_directory }} state=directory recurse=yes
+  when: geoserver_data_dir_exists.stat.exists == false
+
+- name: pull down empty data dir if it doesn't exist
+  shell: "cd {{ geoserver_data_directory }}; wget --no-check-certificate {{ artifactory_server }}{{ geoserver_data_dir_path }}{{ geoserver_data_dir }}"
+  when: geoserver_data_dir_exists.stat.exists == false
+
+- name: untar and delete archive files.
+  shell: "cd {{ geoserver_data_directory }}; tar -xzf {{ geoserver_data_dir }}; rm {{ geoserver_data_dir }}"
+  when: geoserver_data_dir_exists.stat.exists == false
+
+- name: (re)start services
+  shell: "/opt/tomcat/bin/tomcat restart {{ geoserver_instance }}"
+
+- name: check for existing work/name space
+  uri:
+    url: "{{ geoserver_endpoint }}rest/namespaces/{{ item }}"
+    method: GET
+    user: "admin"
+    password: "{{ geoserver_password }}"
+    force_basic_auth: yes
+    status_code: 200,404
+  with_items: "{{ geoserver_workspace_names }}"
+  register: namespacesExist
+
+- name: Add new workspace/namespace
+  uri:
+    url: "{{ geoserver_endpoint }}rest/namespaces"
+    method: POST
+    user: "admin"
+    password: "{{ geoserver_password }}"
+    body: "<namespace><prefix>{{ item.item }}</prefix><uri>http://gov.usgs.cida/{{ item.item }}</uri></namespace>"
+    force_basic_auth: yes
+    status_code: 201
+# Passing headers in this form is deprecated but it works and the new way doesn't or I can't figure it out
+# headers: "Add custom HTTP headers to a request in the format of a YAML hash"
+    HEADER_Content-Type: "text/xml"
+  when: item.status == 404
+  with_items: "{{ namespacesExist.results }}"
+
+- name: Activate the workspace/namespace
+  uri:
+    url: "{{ geoserver_endpoint }}rest/namespaces/{{ item.item }}"
+    method: PUT
+    user: "admin"
+    password: "{{ geoserver_password }}"
+    body: "<namespace><prefix>{{ item.item }}</prefix><uri>http://gov.usgs.cida/{{ item.item }}</uri></namespace>"
+    force_basic_auth: yes
+    status_code: 200
+# Passing headers in this form is deprecated but it works and the new way doesn't or I can't figure it out
+# headers: "Add custom HTTP headers to a request in the format of a YAML hash"
+    HEADER_Content-Type: "text/xml"
+  when: item.status == 404
+  with_items: "{{ namespacesExist.results }}"
